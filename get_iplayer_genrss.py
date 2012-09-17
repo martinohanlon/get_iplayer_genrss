@@ -101,12 +101,6 @@ rssTtl = args.rssTTL
 # contact details of the web master
 rssWebMaster = args.rssWebMaster
 
-# alt download directories
-if args.altDownloadDir != None: altDownloadDirs = args.altDownloadDir.split(",")
-
-# media types
-if args.mediaType != None: mediaTypes = args.mediaType.split(",")
-
 # get_iplayer download history file location
 get_iplayerDownloadHistoryFile = os.getenv("HOME") + "/.get_iplayer/download_history"
 if args.verbose: print "Using get_iplayer download history file = " + get_iplayerDownloadHistoryFile 
@@ -164,6 +158,8 @@ for download in downloadHistory:
 	if includeDownload == True:
 		# check to see its the right media type
 		if args.mediaType != None:
+			# media types
+			mediaTypes = args.mediaType.split(",")
 			foundMediaType = False
 			for mediaType in mediaTypes: 
 				if mediaType == downloadData[dhType]: foundMediaType = True
@@ -195,16 +191,21 @@ for download in downloadHistory:
 		if os.path.exists(fullPath) == False:
 			includeDownload = False
 			# is there is an alternative download dir
-			for altDownloadDir in altDownloadDirs:
-				if len(altDownloadDir) > 0:
-					# tidy up parameter
-					if altDownloadDir[-1:] != "/": altDownloadDir = altDownloadDir + "/"
-					altFullPath = altDownloadDir + fileName
-					if os.path.exists(altFullPath) == True: 
-						fullPath = altFullPath
-						includeDownload = True
-				#end if
-			#end for
+			if args.altDownloadDir != None:
+				# alt download directories
+				altDownloadDirs = args.altDownloadDir.split(",")
+
+				for altDownloadDir in altDownloadDirs:
+					if len(altDownloadDir) > 0:
+						# tidy up parameter
+						if altDownloadDir[-1:] != "/": altDownloadDir = altDownloadDir + "/"
+						altFullPath = altDownloadDir + fileName
+						if os.path.exists(altFullPath) == True: 
+							fullPath = altFullPath
+							includeDownload = True
+					#end if
+				#end for
+			# end if
 		else:
 			includeDownload = True
 		#end if
