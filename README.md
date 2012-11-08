@@ -1,7 +1,7 @@
 -------------------------------------------------------------------------------
 get_iplayer_genrss
 Martin O'Hanlon (martin@ohanlonweb.com)
-www.stuffaboutcode.com
+http://www.stuffaboutcode.com/p/getiplayergenrss.html
 -------------------------------------------------------------------------------
 
 get_iplayer_genrss is a utility for creating a rss or podcast feed from 
