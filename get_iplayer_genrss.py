@@ -109,7 +109,7 @@ if args.verbose: print "Using get_iplayer download history file = " + get_iplaye
 outputFilename = args.outputRSSFilename
 
 # - number of days in the past
-numberOfDays = 30
+numberOfDays = int(args.numberOfPastDays)
 now = datetime.datetime.now()
 fromDate = now-datetime.timedelta(days=numberOfDays)
 
@@ -182,7 +182,7 @@ for download in downloadHistory:
 		# Work out whether a sub directory was used as part of the download and add it to the download
 		if len(fullPathData) > 1:
 			subFolder = fullPathData[len(fullPathData)-2]
-			if subFolder == downloadData[dhName].replace(" ", "_").replace(":", "").replace("'", ""):
+			if subFolder == downloadData[dhName].replace(" &", "").replace(" ", "_").replace(":", "").replace("'", ""):
 				fileName = subFolder + "/" + fileName
 			#end if
 		#end if
