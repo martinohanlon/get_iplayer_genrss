@@ -31,6 +31,7 @@ dhGuidance = 13
 dhWeb = 14
 dhEpisodeNum = 15
 dhSeriesNum = 16
+
 default_histfile = os.getenv("HOME") + "/.get_iplayer/download_history"
 
 
@@ -71,6 +72,9 @@ def process_download(download):
 
     # get the full path of the file
     fullPath = downloadData[dhFileName]
+
+    # munge series name from potentially inconsisent text given
+    series, *subtitle = downloadData[dhName].split(':')
 
     # Check whether this download should be included due to the date range
     downloadDate = datetime.datetime.fromtimestamp(int(downloadData[dhTimeAdded]))
@@ -141,15 +145,37 @@ def process_download(download):
         # get the stats for the file
         fileStat = os.stat(fullPath)
 
+        title = series
+
+        if downloadData[dhSeriesNum]:
+            title += f" : S{downloadData[dhSeriesNum]}"
+        elif downloadData[dhEpisodeNum]:
+            title += " : "
+        if downloadData[dhEpisodeNum]:
+            title += f"E{downloadData[dhEpisodeNum]}"
+        if subtitle:
+            title += f" : {subtitle}"
+        if downloadData[dhEpisode]:
+            title += f" : {downloadData[dhEpisode]}"
+        title = encodeXMLText(title)
+
         # write rss item
-        outputFile.write("<item>\n")
-        outputFile.write("<title>" + encodeXMLText(downloadData[dhName] + " " + downloadData[dhEpisode]) + "</title>\n")
-        outputFile.write("<description>" + encodeXMLText(downloadData[dhDescription]) + "</description>\n")
-        outputFile.write("<link>" + rssItemURL + fileName + "</link>\n")
-        outputFile.write("<guid>" + rssItemURL + fileName + "</guid>\n")
-        outputFile.write("<pubDate>" + formatDate(datetime.datetime.fromtimestamp(int(downloadData[dhTimeAdded]))) + "</pubDate>\n")
-        outputFile.write("<enclosure url=\"" + rssItemURL + fileName + "\" length=\"" + str(fileStat[ST_SIZE]) + "\" type=\"" + getItemType(fileNameBits[len(fileNameBits)-1], args.force_audio_mp3) + "\" />\n")
-        outputFile.write("</item>\n")
+        text = "<item>\n"
+        text += f"<title>{title}</title>\n"
+        text += f"<description>{encodeXMLText(downloadData[dhDescription])}\n{downloadData[dhWeb]}</description>\n"
+        text += f"<link>{rssItemURL}{fileName}</link>\n"
+        text += f"<guid>{downloadData[dhPID]}</guid>\n"
+        text += f"<itunes:image href=\"{downloadData[dhThumbnail]}\" />\n"
+        text += f"<itunes:duration>{downloadData[dhDuration]}</itunes:duration>\n"
+        text += f"<pubDate>{formatDate(datetime.datetime.fromtimestamp(int(downloadData[dhTimeAdded])))}</pubDate>\n"
+        text += f"<enclosure url=\"{rssItemURL}{fileName}\" length=\"{str(fileStat[ST_SIZE])}\" type=\"{getItemType(fileNameBits[len(fileNameBits)-1], args.force_audio_mp3)}\" />\n"
+        text += "</item>\n"
+
+        return (series, text)
+
+    # Not handling this episode
+    return (None, None)
+
 
 # ------------------------------------------------------------------------------
 # Main programme
@@ -224,24 +250,10 @@ GIPHistoryFile = open(get_iplayerDownloadHistoryFile)
 downloadHistory = GIPHistoryFile.readlines()
 GIPHistoryFile.close()
 
-# open rss file
-outputFile = open(outputFilename, "w")
-
-# write rss header
-outputFile.write("<?xml version=\"1.0\" encoding=\"UTF-8\" ?>" + "\n")
-outputFile.write("<rss version=\"2.0\">" + "\n")
-outputFile.write("<channel>\n")
-outputFile.write("<title>" + rssTitle + "</title>\n")
-outputFile.write("<description>" + rssDescription + "</description>\n")
-outputFile.write("<link>" + rssLink + "</link>\n")
-outputFile.write("<ttl>" + rssTtl + "</ttl>\n")
-outputFile.write("<image><url>" + rssImageUrl + "</url><title>" + rssTitle + "</title><link>" + rssLink +"</link></image>\n")
-outputFile.write("<copyright>www.stuffaboutcode.com (2012)</copyright>\n")
-outputFile.write("<lastBuildDate>" + formatDate(now) + "</lastBuildDate>\n")
-outputFile.write("<pubDate>" + formatDate(now) + "</pubDate>\n")
-outputFile.write("<webMaster>" + rssWebMaster + "</webMaster>\n")
 
 prev = None
+
+channels={}
 
 # go through the download history
 for (i, download) in enumerate(downloadHistory):
@@ -262,13 +274,43 @@ for (i, download) in enumerate(downloadHistory):
 
     prev = None
 
-    try:
-        process_download(download)
-    except Exception as e:
-        print(f"Gah, data buggered ({e}), skipping line {i}:\n  {download}", file=sys.stderr)
+#try:
+    (channel, item) = process_download(download)
 
+    if channel and item:
+        if channel not in channels:
+            channels[channel]=[]
+        channels[channel].append(item)
+
+#except Exception as e:
+#    print(f"Gah, data buggered ({e}), skipping line {i}:\n  {download}", file=sys.stderr)
+
+# open rss file
+outputFile = open(outputFilename, "w")
+
+# write rss header
+outputFile.write("<?xml version=\"1.0\" encoding=\"UTF-8\" ?>" + "\n")
+#outputFile.write("<rss version=\"2.0\">" + "\n")
+outputFile.write("<rss xmlns:itunes=\"http://www.itunes.com/dtds/podcast-1.0.dtd\" version=\"2.0\">\n")
+
+# cycle over channels (programmes as series)
+for channel, items in channels.items():
+    # Write channel header
+    outputFile.write("<channel>\n")
+    outputFile.write(f"<title>{rssTitle} - {channel}</title>\n")
+    outputFile.write(f"<description>{rssDescription}</description>\n")
+    outputFile.write(f"<link>{rssLink}</link>\n")
+    outputFile.write(f"<ttl>{rssTtl}</ttl>\n")
+    outputFile.write(f"<image><url>{rssImageUrl}</url><title>{rssTitle}</title><link>{rssLink}</link></image>\n")
+    outputFile.write(f"<lastBuildDate>{formatDate(now)}</lastBuildDate>\n")
+    outputFile.write(f"<pubDate>{formatDate(now)}</pubDate>\n")
+    outputFile.write(f"<webMaster>{rssWebMaster}</webMaster>\n")
+
+    for item in items:
+        outputFile.write(item)
+
+    outputFile.write("</channel>\n")
 # write rss footer
-outputFile.write("</channel>\n")
 outputFile.write("</rss>")
 outputFile.close()
 
