@@ -6,6 +6,7 @@ import datetime
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import time
 import urllib.request
@@ -38,13 +39,18 @@ dhSeriesNum = 16
 # JSON fields
 DISPLAY_TITLE = 'display_title'
 FIRST_BROADCAST_DATE = 'first_broadcast_date'
+IMAGE = 'image'
 LONG_SYNOPSIS = 'long_synopsis'
 PARENT = 'parent'
+PID = 'pid'
 POSITION = 'position'
 PROGRAMME = 'programme'
 SHORT_SYNOPSIS = 'short_synopsis'
 SUBTITLE='subtitle'
 TITLE='title'
+
+JSON = 'json'
+TEXT = 'text'
 
 # default locations
 default_histfile = os.getenv("HOME") + "/.get_iplayer/download_history"
@@ -222,7 +228,7 @@ def extra_data_from_bbc(ippid):
     # Retrieved format: 2022-12-30T18:15:00Z
     pubdate = reformat_bbc_pubdate(j[PROGRAMME][FIRST_BROADCAST_DATE])
 
-    return title, description, pubdate
+    return title, description, pubdate, j
 
 # ------------------------------------------------------------------------------
 # handle an individual programme download history record
@@ -312,11 +318,12 @@ def process_download(download):
         title = None
         description = None
         pubdate = None
+        j = None
 
         # pull extra info from BBC if requested to do so
         if config.json:
             try:
-                title, description, pubdate = extra_data_from_bbc(downloadData[dhPID])
+                title, description, pubdate, j = extra_data_from_bbc(downloadData[dhPID])
             except Exception as e:
                 if config.verbose:
                     print(f"Failed to retrieve JSON for {downloadData[dhPID]} : '{e}'")
@@ -350,10 +357,10 @@ def process_download(download):
         text += f"<enclosure url=\"{media_url}\" length=\"{str(fileStat[ST_SIZE])}\" type=\"{getItemType(fileNameBits[len(fileNameBits)-1], config.force_audio_mp3)}\" />\n"
         text += "</item>\n"
 
-        return (series, text)
+        return (series, text, j)
 
     # Not handling this episode
-    return (None, None)
+    return (None, None, None)
 
 # ------------------------------------------------------------------------------
 # Parse history data in to channels (think programme-as-series)
@@ -383,17 +390,84 @@ def get_channels(downloadHistory):
         prev = None
 
         try:
-            (channel, item) = process_download(download)
+            (channel, item, j) = process_download(download)
 
             if channel and item:
                 if channel not in channels:
                     channels[channel]=[]
-                channels[channel].append(item)
+                channels[channel].append({JSON:j, TEXT:item})
 
         except Exception as e:
             print(f"Gah, data buggered ({e}), skipping line {i}:\n  {download}", file=sys.stderr)
 
     return channels
+
+# ------------------------------------------------------------------------------
+# Write RSS header
+
+def write_rss_header(f):
+    f.write("<?xml version=\"1.0\" encoding=\"UTF-8\" ?>" + "\n")
+    f.write("<rss xmlns:itunes=\"http://www.itunes.com/dtds/podcast-1.0.dtd\" version=\"2.0\">\n")
+
+# ------------------------------------------------------------------------------
+# Write RSS footer
+
+def write_rss_footer(f):
+    f.write("</rss>")
+
+# ------------------------------------------------------------------------------
+# Prepare channel name for filename context
+
+re_file_subs = re.compile('[^a-zA-Z0-9]')
+re_file_dedup = re.compile('__+')
+re_file_dedot = re.compile('_\.')
+
+def prep_channel_file_name(channel):
+    tmp = re_file_subs.sub("_", channel)
+    tmp = re_file_dedot.sub("", tmp)
+    return re_file_dedup.sub("_", tmp).lower()
+
+# ------------------------------------------------------------------------------
+# Write channel header
+
+re_inject_channel_us = re.compile(".rss$")
+
+def write_channel_header(f, name = "", channel_us = None, j = None):
+    title = config.rssTitle
+    img_url = config.rssImageURL
+    rss_url = config.rssHTMLPageURL
+    desc = None
+
+    if name:
+        title += f" - {name}"
+
+        if channel_us:
+            rss_url = re_inject_channel_us.sub(f"_{channel_us}.rss", rss_url)
+
+        if j:
+            desc = j[PROGRAMME][PARENT][PROGRAMME][SHORT_SYNOPSIS]
+            img_pid = j[PROGRAMME][PARENT][PROGRAMME][IMAGE][PID]
+            img_url = f"https://ichef.bbci.co.uk/images/ic/1920x1080/{img_pid}.jpg"
+
+    if not desc:
+        desc = config.rssDescription
+
+    f.write("<channel>\n")
+    f.write(f"<title>{title}</title>\n")
+    f.write(f"<description>{desc}</description>\n")
+    f.write(f"<link>{rss_url}</link>\n")
+    f.write(f"<ttl>{config.rssTTL}</ttl>\n")
+    f.write(f"<image><url>{img_url}</url><title>{title}</title><link>{rss_url}</link></image>\n")
+    f.write(f"<itunes:image href=\"{img_url}\" />\n")
+    f.write(f"<lastBuildDate>{config.now}</lastBuildDate>\n")
+    f.write(f"<pubDate>{config.now}</pubDate>\n")
+    f.write(f"<webMaster>{config.rssWebMaster}</webMaster>\n")
+
+# ------------------------------------------------------------------------------
+# Write channel footer
+
+def write_channel_footer(f):
+    f.write("</channel>\n")
 
 # ------------------------------------------------------------------------------
 # Main programme
@@ -413,33 +487,37 @@ with open(config.histfile) as f:
 
     channels = get_channels(downloadHistory)
 
-    # output RSS file
-    with open(config.outputRSSFilename, "w") as outputFile:
+    rss_name = config.outputRSSFilename
+    rss_path = Path(rss_name)
 
-        # write rss header
-        outputFile.write("<?xml version=\"1.0\" encoding=\"UTF-8\" ?>" + "\n")
-        outputFile.write("<rss xmlns:itunes=\"http://www.itunes.com/dtds/podcast-1.0.dtd\" version=\"2.0\">\n")
+    # output RSS files, a unified one, and one for each channel
+    with rss_path.open("w") as unified_rss:
+        write_rss_header(unified_rss)
 
         # cycle over channels (programmes as series)
         for channel, items in channels.items():
-            # Write channel header
-            outputFile.write("<channel>\n")
-            outputFile.write(f"<title>{config.rssTitle} - {channel}</title>\n")
-            outputFile.write(f"<description>{config.rssDescription}</description>\n")
-            outputFile.write(f"<link>{config.rssHTMLPageURL}</link>\n")
-            outputFile.write(f"<ttl>{config.rssTTL}</ttl>\n")
-            outputFile.write(f"<image><url>{config.rssImageURL}</url><title>{config.rssTitle}</title><link>{config.rssHTMLPageURL}</link></image>\n")
-            outputFile.write(f"<lastBuildDate>{config.now}</lastBuildDate>\n")
-            outputFile.write(f"<pubDate>{config.now}</pubDate>\n")
-            outputFile.write(f"<webMaster>{config.rssWebMaster}</webMaster>\n")
+            stem = rss_path.stem
+            channel_us = prep_channel_file_name(channel)
+            channel_rss_path = rss_path.with_stem(f"{stem}_{channel_us}")
 
-            for item in items:
-                outputFile.write(item)
+            with channel_rss_path.open("w") as channel_rss:
+                j = items[0][JSON]
+                write_channel_header(unified_rss)
+                write_rss_header(channel_rss)
+                write_channel_header(channel_rss, channel, channel_us, j)
 
-            outputFile.write("</channel>\n")
+                for item in items:
+                    unified_rss.write(item[TEXT])
+                    channel_rss.write(item[TEXT])
 
-        # write rss footer
-        outputFile.write("</rss>")
+                write_channel_footer(unified_rss)
+                write_channel_footer(channel_rss)
+                write_rss_footer(channel_rss)
+
+            if config.verbose:
+                print("RSS/podcast created : " + str(channel_rss_path))
+
+        write_rss_footer(unified_rss)
 
         if config.verbose:
             print("RSS/podcast created : " + config.outputRSSFilename)
