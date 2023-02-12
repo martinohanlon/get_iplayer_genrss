@@ -5,6 +5,7 @@ import argparse
 import datetime
 import json
 import os
+from pathlib import Path
 import sys
 import time
 import urllib.request
@@ -34,7 +35,9 @@ dhWeb = 14
 dhEpisodeNum = 15
 dhSeriesNum = 16
 
+# default locations
 default_histfile = os.getenv("HOME") + "/.get_iplayer/download_history"
+default_cache_dir = os.getenv("HOME") + "/.cache/get_iplayer_rss"
 
 # ------------------------------------------------------------------------------
 # handle command line options
@@ -51,6 +54,7 @@ def get_args():
     parser.add_argument("rssTTL", help="Time to live in minutes for the rss feed e.g 60 minutes")
     parser.add_argument("rssWebMaster", help="RSS feed web master contact details e.g. me@me.com")
     parser.add_argument("-a", "--altDownloadDir", help="An alternative download directory as apposed to that in the download_history, useful if the downloads have been copied to another location; specify multiple by seperating with a comma /path1,path2")
+    parser.add_argument("-c", "--cache-dir", help=f"Cache dir, for JSON (default: {default_cache_dir})", default=default_cache_dir)
     parser.add_argument( "--force-audio-mp3", action='store_true', help="Audio has been externally converted to MP3")
     parser.add_argument("-f", "--histfile", help=f"iplayer history file (default: {default_histfile})", default=default_histfile)
     parser.add_argument("-j", "--json", action='store_true', help=f"Retrieve extended (better) data from the BBC website. The get_iplayer history data is limited and the date downloaded isn't necessarily the date of first broadcast.")
@@ -69,6 +73,7 @@ def get_args():
         print(f"  RssImageURL: {args.rssImageURL}")
         print(f"  RssTTL: {args.rssTTL}")
         print(f"  RssWebMaster: {args.rssWebMaster}")
+        print(f"  Cache dir: {args.cache_dir}")
         if args.altDownloadDir != None:
             print(f"  AltDownloadDir: {args.altDownloadDir}")
         if args.mediaType != None:
@@ -124,18 +129,43 @@ def get_json_from_bbc(ippid):
     url = f"https://www.bbc.co.uk/programmes/{ippid}.json"
     with urllib.request.urlopen(url, timeout=30) as response:
         j = response.read()
+        j = j.decode("utf-8")
+
+    if not j:
+        raise Exception("Failed to retrieve JSON from '{url}' : {response.status}")
+
+    return j
+
+# ------------------------------------------------------------------------------
+# retrieve programme JSON. Try cache first, only hit up BBC on a miss
+# returns json as multilevel dict
+
+def get_json(ippid):
+    j = None
+
+    cache_dir = Path(config.cache_dir)
+    cache_file = cache_dir / f"{ippid}.json"
+
+    if cache_file.exists():
+        j = cache_file.read_text()
+
+    if not j:
+        j = get_json_from_bbc(ippid)
+
         if j:
-            j = j.decode("utf-8")
-            j = json.loads(j)
-        else:
-            raise Exception("Failed to retrieve JSON from '{url}' : {response.status}")
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            cache_file.write_text(j)
+
+    if j:
+        j = json.loads(j)
+
     return j
 
 # ------------------------------------------------------------------------------
 # retrieve JSON and extract and return data
 
 def extra_data_from_bbc(ippid):
-   j = get_json_from_bbc(ippid)
+    j = get_json(ippid)
 
    title = j['programme']['long_synopsis']
    description = j['programme']['parent']['programme']['short_synopsis'] + "\n\n" + j['programme']['long_synopsis']
