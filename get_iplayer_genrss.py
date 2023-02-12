@@ -17,6 +17,10 @@ from stat import * # ST_SIZE ST_MTIME
 EXPECTED_SEPARATOR_COUNT = 17
 FIELD_SEPARATOR = '|'
 
+# BBC URIs
+BBC_IMAGE_URI_BASE = "https://ichef.bbci.co.uk/images/ic/1920x1080/"
+BBC_PROGRAMMES_URI_BASE = "https://www.bbc.co.uk/programmes/"
+
 # get_iplayer download_history fields
 dhPID = 0
 dhName = 1
@@ -40,14 +44,18 @@ dhSeriesNum = 16
 DISPLAY_TITLE = 'display_title'
 FIRST_BROADCAST_DATE = 'first_broadcast_date'
 IMAGE = 'image'
+LINKS = 'links'
 LONG_SYNOPSIS = 'long_synopsis'
 PARENT = 'parent'
 PID = 'pid'
 POSITION = 'position'
 PROGRAMME = 'programme'
+RELATED_SITE='related_site'
 SHORT_SYNOPSIS = 'short_synopsis'
 SUBTITLE='subtitle'
 TITLE='title'
+TYPE='type'
+URL='url'
 
 JSON = 'json'
 TEXT = 'text'
@@ -147,7 +155,7 @@ def encodeXMLText(text):
 
 def get_json_from_bbc(ippid):
     j = None
-    url = f"https://www.bbc.co.uk/programmes/{ippid}.json"
+    url = f"{BBC_PROGRAMMES_URI_BASE}{ippid}.json"
     with urllib.request.urlopen(url, timeout=30) as response:
         j = response.read()
         j = j.decode("utf-8")
@@ -207,6 +215,7 @@ def extra_data_from_bbc(ippid):
 
     series_num = j[PROGRAMME][PARENT][PROGRAMME][POSITION]
     episode_num = j[PROGRAMME][POSITION]
+    img_url = f"{BBC_IMAGE_URI_BASE}{j[PROGRAMME][IMAGE][PID]}.jpg"
 
     series_text = ""
 
@@ -222,13 +231,19 @@ def extra_data_from_bbc(ippid):
     if subtitle:
         title += f" : {subtitle}"
 
-    description = j[PROGRAMME][PARENT][PROGRAMME][SHORT_SYNOPSIS] + "\n\n" + j[PROGRAMME][LONG_SYNOPSIS]
+    description = j[PROGRAMME][LONG_SYNOPSIS]
+
+    if LINKS in j[PROGRAMME] and len(j[PROGRAMME][LINKS]):
+        description += "\n\nRelated links:"
+        for link in j[PROGRAMME][LINKS]:
+            if link[TYPE] == RELATED_SITE:
+                description += f"\n\n  * {link[TITLE]} : {link[URL]}"
 
     # Target format: Sat, 11 Feb 2023 18:21:03 +0000
     # Retrieved format: 2022-12-30T18:15:00Z
     pubdate = reformat_bbc_pubdate(j[PROGRAMME][FIRST_BROADCAST_DATE])
 
-    return title, description, pubdate, j
+    return title, description, pubdate, img_url, j
 
 # ------------------------------------------------------------------------------
 # handle an individual programme download history record
@@ -318,12 +333,13 @@ def process_download(download):
         title = None
         description = None
         pubdate = None
+        img_url = None
         j = None
 
         # pull extra info from BBC if requested to do so
         if config.json:
             try:
-                title, description, pubdate, j = extra_data_from_bbc(downloadData[dhPID])
+                title, description, pubdate, img_url, j = extra_data_from_bbc(downloadData[dhPID])
             except Exception as e:
                 if config.verbose:
                     print(f"Failed to retrieve JSON for {downloadData[dhPID]} : '{e}'")
@@ -345,13 +361,16 @@ def process_download(download):
 
         media_url = f"{config.rssDownloadsURL}{fileName}"
 
+        if not img_url:
+            img_url = downloadData[dhThumbnail]
+
         # write rss item
         text = "<item>\n"
         text += f"<title>{encodeXMLText(title)}</title>\n"
         text += f"<description>{encodeXMLText(description)}\n\n{downloadData[dhWeb]}</description>\n"
         text += f"<link>{media_url}</link>\n"
         text += f"<guid>{downloadData[dhPID]}</guid>\n"
-        text += f"<itunes:image href=\"{downloadData[dhThumbnail]}\" />\n"
+        text += f"<itunes:image href=\"{img_url}\" />\n"
         text += f"<itunes:duration>{downloadData[dhDuration]}</itunes:duration>\n"
         text += f"<pubDate>{pubdate}</pubDate>\n"
         text += f"<enclosure url=\"{media_url}\" length=\"{str(fileStat[ST_SIZE])}\" type=\"{getItemType(fileNameBits[len(fileNameBits)-1], config.force_audio_mp3)}\" />\n"
@@ -429,6 +448,7 @@ def prep_channel_file_name(channel):
 
 # ------------------------------------------------------------------------------
 # Write channel header
+# This is used in both the unified and individual channel contexts, with slight variance in behaviour
 
 re_inject_channel_us = re.compile(".rss$")
 
@@ -447,7 +467,7 @@ def write_channel_header(f, name = "", channel_us = None, j = None):
         if j:
             desc = j[PROGRAMME][PARENT][PROGRAMME][SHORT_SYNOPSIS]
             img_pid = j[PROGRAMME][PARENT][PROGRAMME][IMAGE][PID]
-            img_url = f"https://ichef.bbci.co.uk/images/ic/1920x1080/{img_pid}.jpg"
+            img_url = f"{BBC_IMAGE_URI_BASE}{img_pid}.jpg"
 
     if not desc:
         desc = config.rssDescription
@@ -490,7 +510,7 @@ with open(config.histfile) as f:
     rss_name = config.outputRSSFilename
     rss_path = Path(rss_name)
 
-    # output RSS files, a unified one, and one for each channel
+    # output RSS files; a unified one, and one for each channel
     with rss_path.open("w") as unified_rss:
         write_rss_header(unified_rss)
 
