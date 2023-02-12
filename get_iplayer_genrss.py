@@ -50,6 +50,9 @@ TITLE='title'
 default_histfile = os.getenv("HOME") + "/.get_iplayer/download_history"
 default_cache_dir = os.getenv("HOME") + "/.cache/get_iplayer_rss"
 
+# track in use cached items to allow clear up
+live_cache_ippids = []
+
 # ------------------------------------------------------------------------------
 # handle command line options
 
@@ -171,7 +174,21 @@ def get_json(ippid):
     if j:
         j = json.loads(j)
 
+    live_cache_ippids.append(ippid)
+
     return j
+
+# ------------------------------------------------------------------------------
+# prune cache to only include live items
+
+def prune_cache(live_ippids):
+    cache_dir = Path(config.cache_dir)
+
+    files = cache_dir.glob('*.json')
+    for file_str in files:
+        file = Path(file_str)
+        if file.stem not in live_ippids:
+            file.unlink()
 
 # ------------------------------------------------------------------------------
 # retrieve JSON and extract and return data
@@ -426,5 +443,8 @@ with open(config.histfile) as f:
 
         if config.verbose:
             print("RSS/podcast created : " + config.outputRSSFilename)
+
+if live_cache_ippids:
+    prune_cache(live_cache_ippids)
 
 # ------------------------------------------------------------------------------
