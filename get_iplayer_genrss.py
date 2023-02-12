@@ -35,6 +35,17 @@ dhWeb = 14
 dhEpisodeNum = 15
 dhSeriesNum = 16
 
+# JSON fields
+DISPLAY_TITLE = 'display_title'
+FIRST_BROADCAST_DATE = 'first_broadcast_date'
+LONG_SYNOPSIS = 'long_synopsis'
+PARENT = 'parent'
+POSITION = 'position'
+PROGRAMME = 'programme'
+SHORT_SYNOPSIS = 'short_synopsis'
+SUBTITLE='subtitle'
+TITLE='title'
+
 # default locations
 default_histfile = os.getenv("HOME") + "/.get_iplayer/download_history"
 default_cache_dir = os.getenv("HOME") + "/.cache/get_iplayer_rss"
@@ -91,6 +102,7 @@ def formatDate(dt):
 # Convert datetime from BBC to required format
 
 def reformat_bbc_pubdate(pubdate):
+    # fromisoformat requires Python >= 3.11 to cope with the inbound format
     return formatDate(datetime.datetime.fromisoformat(pubdate))
 
 # ------------------------------------------------------------------------------
@@ -167,15 +179,33 @@ def get_json(ippid):
 def extra_data_from_bbc(ippid):
     j = get_json(ippid)
 
-   title = j['programme']['long_synopsis']
-   description = j['programme']['parent']['programme']['short_synopsis'] + "\n\n" + j['programme']['long_synopsis']
+    title = j[PROGRAMME][DISPLAY_TITLE][TITLE]
+    subtitle = j[PROGRAMME][DISPLAY_TITLE][SUBTITLE]
 
-   # Target format: Sat, 11 Feb 2023 18:21:03 +0000
-   # Retrieved format: 2022-12-30T18:15:00Z
-   pubdate = j['programme']['first_broadcast_date']
-   pubdate = reformat_bbc_pubdate(pubdate)
+    series_num = j[PROGRAMME][PARENT][PROGRAMME][POSITION]
+    episode_num = j[PROGRAMME][POSITION]
 
-   return title, description, pubdate
+    series_text = ""
+
+    if series_num:
+        series_text = f"S{series_num}"
+
+    if episode_num:
+        series_text += f"E{episode_num}"
+
+    if series_text:
+        title += f" : {series_text}"
+
+    if subtitle:
+        title += f" : {subtitle}"
+
+    description = j[PROGRAMME][PARENT][PROGRAMME][SHORT_SYNOPSIS] + "\n\n" + j[PROGRAMME][LONG_SYNOPSIS]
+
+    # Target format: Sat, 11 Feb 2023 18:21:03 +0000
+    # Retrieved format: 2022-12-30T18:15:00Z
+    pubdate = reformat_bbc_pubdate(j[PROGRAMME][FIRST_BROADCAST_DATE])
+
+    return title, description, pubdate
 
 # ------------------------------------------------------------------------------
 # handle an individual programme download history record
@@ -294,7 +324,7 @@ def process_download(download):
         # write rss item
         text = "<item>\n"
         text += f"<title>{encodeXMLText(title)}</title>\n"
-        text += f"<description>{encodeXMLText(description)}\n{downloadData[dhWeb]}</description>\n"
+        text += f"<description>{encodeXMLText(description)}\n\n{downloadData[dhWeb]}</description>\n"
         text += f"<link>{media_url}</link>\n"
         text += f"<guid>{downloadData[dhPID]}</guid>\n"
         text += f"<itunes:image href=\"{downloadData[dhThumbnail]}\" />\n"
